@@ -949,7 +949,6 @@ feat(profile): add profile page with KMs counter and badges grid
 feat(profile): add edit profile page
 feat(app): wire up MaterialApp.router with Firebase init and ProviderScope
 feat(app): add navbar, loading overlay, error widget, and coming soon page
-chore(ref): archive existing UI to lib/_reference for visual reference
 ```
 
 ### Phase 3 — Standalone Ride
