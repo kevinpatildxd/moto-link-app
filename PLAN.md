@@ -238,10 +238,17 @@ lib/
 
 # Phase Plan
 
-## Phase 0 — Manual Firebase + LiveKit Setup
-> Before writing a single line of code. ~3-4 hours. No git commit.
+> **How this plan works:**
+> - 🤖 = AI does this (Claude writes/edits the files)
+> - 👤 = Human does this (you run commands, use consoles, test on device)
+> - Each phase ends with a **Test Gate** — all checkboxes must pass before moving to the next phase
 
-**Firebase Console (`console.firebase.google.com`):**
+---
+
+## Phase 0 — Firebase + LiveKit Setup
+> ~3-4 hours · All human tasks · No git commit
+
+👤 **Firebase Console (`console.firebase.google.com`):**
 1. Create project `motolink` — disable Analytics
 2. Authentication → Google Sign-In → Enable
 3. Firestore → Create → `asia-south1` → Production mode → apply security rules
@@ -250,14 +257,14 @@ lib/
 6. Add Android app → package `com.motolink.app` → get SHA-1 via `./gradlew signingReport` → download `google-services.json` → place at `android/app/google-services.json`
 7. Create Firestore document `config/features`: `{ communitiesEnabled: false, marketplaceEnabled: false }`
 
-**FlutterFire CLI:**
+👤 **FlutterFire CLI:**
 ```bash
 dart pub global activate flutterfire_cli
 flutterfire configure --project=<firebase-project-id>
 # Select Android only → generates lib/firebase_options.dart
 ```
 
-**LiveKit Server (Oracle Cloud Always Free ARM VM):**
+👤 **LiveKit Server (Oracle Cloud Always Free ARM VM):**
 8. Create Oracle Cloud account → Compute → Create Instance → select `VM.Standard.A1.Flex` (ARM, Always Free) → Ubuntu 22.04 → 1 OCPU / 1 GB RAM
 9. Open firewall ports in Oracle Security List: `22` (SSH) · `80` (HTTP) · `443` (HTTPS) · `7880` (LiveKit WS) · `7881` (LiveKit RTC) · `50000-60000/udp` (WebRTC media)
 10. SSH into VM, install Docker + Docker Compose:
@@ -300,16 +307,14 @@ flutterfire configure --project=<firebase-project-id>
       domain: motolink.duckdns.org
       tls_port: 5349
     ```
-15. Create token server `token_server.js` (Node.js, ~30 lines) on same VM:
+15. Create token server `token_server.js` on same VM:
     ```js
     const express = require('express')
     const { AccessToken } = require('livekit-server-sdk')
     const app = express()
     app.use(express.json())
-
     const API_KEY = 'motolink'
     const API_SECRET = '<same secret as livekit.yaml>'
-
     app.post('/token', async (req, res) => {
       const { uid, rideId } = req.body
       if (!uid || !rideId) return res.status(400).json({ error: 'missing fields' })
@@ -317,15 +322,15 @@ flutterfire configure --project=<firebase-project-id>
       token.addGrant({ roomJoin: true, room: rideId, canPublish: true, canSubscribe: true })
       res.json({ token: await token.toJwt() })
     })
-
     app.listen(3000, () => console.log('Token server on :3000'))
     ```
-    Install deps: `npm install express livekit-server-sdk`
-    Run with pm2: `npm install -g pm2 && pm2 start token_server.js`
+    ```bash
+    npm install express livekit-server-sdk
+    npm install -g pm2 && pm2 start token_server.js
+    ```
 16. Start LiveKit: `docker compose up -d`
-17. Test: `curl -X POST https://motolink.duckdns.org:3000/token -d '{"uid":"test","rideId":"r1"}' -H 'Content-Type: application/json'` → should return a JWT
 
-**Archive existing UI:**
+👤 **Archive existing UI:**
 ```bash
 mkdir -p lib/_reference
 mv lib/pages lib/_reference/pages
@@ -333,34 +338,46 @@ mv lib/widgets lib/_reference/widgets
 mv lib/theme.dart lib/_reference/theme.dart
 ```
 
-**Done when:** `android/app/google-services.json` ✓ · `lib/firebase_options.dart` ✓ · LiveKit server responding at `wss://motolink.duckdns.org:7880` ✓ · token endpoint returning JWTs ✓
+### ✅ Test Gate — Phase 0
+```bash
+# Verify Firebase files exist
+ls android/app/google-services.json
+# Expected: file listed (no "No such file" error)
+
+ls lib/firebase_options.dart
+# Expected: file listed
+
+# Verify LiveKit token server
+curl -s -X POST https://motolink.duckdns.org:3000/token \
+  -H "Content-Type: application/json" \
+  -d '{"uid":"test","rideId":"test-ride-1"}'
+# Expected: {"token":"eyJ..."} — a JWT string starting with eyJ
+
+# Verify LiveKit server reachable
+curl -s -o /dev/null -w "%{http_code}" https://motolink.duckdns.org:7880
+# Expected: any response code except "connection refused"
+```
+- [ ] `android/app/google-services.json` exists
+- [ ] `lib/firebase_options.dart` exists
+- [ ] Firebase Auth console shows Google Sign-In enabled (green checkmark)
+- [ ] Token endpoint returns a JWT (`{"token":"eyJ..."}`)
+- [ ] LiveKit server reachable on port 7880
+
+**All 5 must pass before Phase 1.**
 
 ---
 
 ## Phase 1 — Android Config + Dependencies
 > ~2-3 hours
 
-**Files to modify:**
+🤖 **AI tasks (in order):**
+1. Modify `android/app/build.gradle.kts` — set `applicationId = "com.motolink.app"`, `namespace = "com.motolink.app"`, `minSdk = 23`, add `id("com.google.gms.google-services")` plugin
+2. Modify `android/settings.gradle.kts` — add `id("com.google.gms.google-services") version "4.4.2" apply false`
+3. Replace `android/app/src/main/AndroidManifest.xml` — all permissions + services
+4. Move `MainActivity.kt` to `com/motolink/app/` package, update package declaration
+5. Replace `pubspec.yaml` with full dependency list
 
-| File | Change |
-|---|---|
-| `android/app/build.gradle.kts` | `applicationId = "com.motolink.app"`, `namespace = "com.motolink.app"`, `minSdk = 23`, add `id("com.google.gms.google-services")` plugin |
-| `android/settings.gradle.kts` | Add `id("com.google.gms.google-services") version "4.4.2" apply false` |
-| `android/app/src/main/AndroidManifest.xml` | Replace entirely — add all permissions + services (see below) |
-| `android/app/src/main/kotlin/.../MainActivity.kt` | Move to `com/motolink/app/`, update `package com.motolink.app` |
-| `pubspec.yaml` | Replace with full dependency list (see below) |
-
-**AndroidManifest permissions to add:**
-`INTERNET` · `ACCESS_NETWORK_STATE` · `ACCESS_FINE_LOCATION` · `ACCESS_COARSE_LOCATION` · `ACCESS_BACKGROUND_LOCATION` · `FOREGROUND_SERVICE` · `FOREGROUND_SERVICE_LOCATION` · `CAMERA` · `READ_MEDIA_IMAGES` · `READ_EXTERNAL_STORAGE(maxSdk=32)` · `POST_NOTIFICATIONS` · `WAKE_LOCK` · `RECORD_AUDIO` · `MODIFY_AUDIO_SETTINGS` · `BLUETOOTH(maxSdk=30)` · `VIBRATE`
-
-**Services inside `<application>`:**
-```xml
-<service android:name=".LocationForegroundService"
-    android:foregroundServiceType="location" android:exported="false"/>
-<meta-data android:name="com.google.firebase.messaging.default_notification_channel_id"
-    android:value="motolink_default"/>
-```
-Change `android:label` to `"MotoLink"`.
+**Permissions:** `INTERNET` · `ACCESS_NETWORK_STATE` · `ACCESS_FINE_LOCATION` · `ACCESS_COARSE_LOCATION` · `ACCESS_BACKGROUND_LOCATION` · `FOREGROUND_SERVICE` · `FOREGROUND_SERVICE_LOCATION` · `CAMERA` · `READ_MEDIA_IMAGES` · `READ_EXTERNAL_STORAGE(maxSdk=32)` · `POST_NOTIFICATIONS` · `WAKE_LOCK` · `RECORD_AUDIO` · `MODIFY_AUDIO_SETTINGS` · `BLUETOOTH(maxSdk=30)` · `VIBRATE`
 
 **pubspec.yaml key dependencies:**
 ```
@@ -374,15 +391,31 @@ http, intl, uuid, shared_preferences, permission_handler,
 sensors_plus, battery_plus, url_launcher, package_info_plus
 ```
 
-**Verify:** `flutter pub get` → `flutter analyze` → `flutter build apk --debug` must succeed.
+### ✅ Test Gate — Phase 1
+```bash
+flutter pub get
+# Expected: exits cleanly, pubspec.lock updated, no resolution errors
+
+flutter analyze
+# Expected: No issues found!
+
+flutter build apk --debug
+# Expected: BUILD SUCCESSFUL
+# APK at: build/app/outputs/flutter-apk/app-debug.apk
+```
+- [ ] `flutter pub get` — no errors
+- [ ] `flutter analyze` — `No issues found!`
+- [ ] `flutter build apk --debug` — `BUILD SUCCESSFUL`
+- [ ] APK file exists: `ls build/app/outputs/flutter-apk/app-debug.apk`
+
+**All 4 must pass before Phase 2.**
 
 ---
 
 ## Phase 2 — Auth + Profile + KMs + Badges
 > ~2 days
 
-**Create in this order:**
-
+🤖 **AI tasks (in order):**
 1. `lib/config/theme.dart` — exact copy of `_reference/theme.dart`
 2. `lib/config/constants.dart` — LiveKit server URL, token endpoint URL, limits, OSM tile URL
 3. `lib/config/badges.dart` — 5 badge definitions with id/name/kmThreshold/tier/icon
@@ -405,15 +438,34 @@ sensors_plus, battery_plus, url_launcher, package_info_plus
 - `FieldValue.increment(distanceKm)` on `users/{uid}.totalKm`
 - Read new total → compare against badge thresholds → `arrayUnion` new badge IDs
 
-**Verify:** Sign in → profile setup → profile shows 0 KM / no badges → kill app → still logged in.
+### ✅ Test Gate — Phase 2
+```bash
+flutter analyze
+# Expected: No issues found!
+
+flutter build apk --debug
+# Expected: BUILD SUCCESSFUL
+
+adb install -r build/app/outputs/flutter-apk/app-debug.apk
+# Expected: Performing Streamed Install / Success
+```
+
+👤 **On device:**
+- [ ] App opens → Google Sign-In screen (black background, neon green button)
+- [ ] Tap Sign In → Google account picker → select account → profile setup form appears
+- [ ] Fill name, bio, bike (make/model/year), emergency contact → tap Save → home screen
+- [ ] Kill app completely → reopen → goes straight to home (still signed in, no login screen)
+- [ ] Profile tab → shows `0 KM`, no badges yet
+- [ ] Tap Edit Profile → form pre-filled with saved data → make a change → save → change persists
+
+**All 6 device checks must pass before Phase 3.**
 
 ---
 
 ## Phase 3 — Standalone Ride (Day 1 Core)
 > ~5-6 days
 
-**Create in this order:**
-
+🤖 **AI tasks (in order):**
 1. `lib/features/ride/domain/ride_model.dart` — includes `joinCode`, `communityId?`, `routePolyline[]`, `distanceKm`
 2. `lib/features/ride/domain/participant_model.dart`
 3. `lib/features/chat/domain/message_model.dart`
@@ -422,9 +474,9 @@ sensors_plus, battery_plus, url_launcher, package_info_plus
 6. `lib/features/chat/data/chat_repository.dart` — `watchRideMessages`, `sendRideMessage`
 7. `lib/features/map/data/location_repository.dart` — Realtime DB read/write
 8. `lib/features/map/data/overpass_repository.dart` — gas stations + rest stops query
-9. `lib/features/voice/data/livekit_service.dart` — LiveKit RTC wrapper (connect to room, publish/unpublish audio track, expose speaking events)
+9. `lib/features/voice/data/livekit_service.dart` — connect to room, publish/unpublish audio track, expose speaking events
 10. `lib/shared/services/location_service.dart` — GPS stream + foreground service platform channel
-11. `android/app/src/main/kotlin/com/motolink/app/LocationForegroundService.kt`
+11. `android/app/src/main/kotlin/com/motolink/app/LocationForegroundService.kt` — `START_STICKY`, notification "Tracking your ride..."
 12. Update `MainActivity.kt` — add MethodChannel `com.motolink.app/location_service`
 13. `lib/shared/providers/ride_provider.dart` + `location_provider.dart` + `chat_provider.dart`
 14. `lib/features/ride/presentation/home_page.dart` — Start/Join buttons + recent rides
@@ -445,87 +497,258 @@ sensors_plus, battery_plus, url_launcher, package_info_plus
 
 **Ride join code:** 6-char alphanumeric (e.g. `MR4829`). Firestore query `where('joinCode', '==', code).where('status', '==', 'waiting')`. Share text: *"Join my MotoLink ride! Code: MR4829"*.
 
-**GPS foreground service:** `LocationForegroundService.kt` → notification "Tracking your ride..." → `START_STICKY`. Platform channel in `MainActivity.kt` starts/stops it.
+### ✅ Test Gate — Phase 3
+```bash
+flutter analyze
+# Expected: No issues found!
 
-**Verify (2 physical devices):** Create → join by code → lobby → start → both see rider dots → walk → dots move → voice PTT works → chat message received → end ride → KMs + badge awarded.
+flutter build apk --debug
+# Expected: BUILD SUCCESSFUL
+
+adb install -r build/app/outputs/flutter-apk/app-debug.apk
+```
+
+👤 **2 physical devices required — both with APK installed and signed in:**
+
+**Ride creation & joining:**
+- [ ] Device A: Home → "Start Ride" → enter title + drop map pin → 6-char code appears (e.g. `MR4829`)
+- [ ] Device B: Home → "Join Ride" → enter code `MR4829` → enters lobby
+- [ ] Both devices: lobby screen shows both participant names
+
+**Live map:**
+- [ ] Device A: tap "Start Ride" → both devices navigate to live map automatically
+- [ ] Both devices: map shows 2 named rider dots
+- [ ] Walk 10+ metres → both dots move within ~5 seconds
+- [ ] Route polyline draws behind you as you move
+- [ ] At least 1 gas station or rest stop POI visible (test outdoors with GPS)
+
+**Voice:**
+- [ ] PTT: Device A holds PTT → indicator turns orange → speaks → Device B hears audio clearly
+- [ ] PTT: release → audio cuts off on Device B
+- [ ] Open mic: toggle on Device A → speak → Device B hears continuously without holding
+
+**Chat:**
+- [ ] Device A sends "test message" → appears on Device B within 3 seconds
+- [ ] Device B replies → appears on Device A
+
+**Background GPS:**
+- [ ] Lock Device A screen (screen off) → Device A's dot still updates on Device B's map within 15 seconds
+- [ ] "Tracking your ride..." notification visible in Device A notification bar
+
+**End ride:**
+- [ ] Device A taps "End Ride" → ride summary appears showing non-zero distance
+- [ ] Device A Profile tab → KMs updated to match ride distance
+- [ ] First ride ever: `First Ride` badge appears on profile
+
+**All checkboxes must pass before Phase 4.**
 
 ---
 
 ## Phase 4 — Guardian Page
 > ~1 day
 
-**Files:**
+🤖 **AI tasks (in order):**
 1. `lib/features/guardian/data/sensor_service.dart` — `watchGForce()` (accelerometer magnitude) + `watchBatteryLevel()`
 2. `lib/features/guardian/presentation/widgets/sensor_card.dart`
 3. `lib/features/guardian/presentation/guardian_page.dart` — port exact UI from `_reference/guardian_page.dart`
 
-**Connections:** G-Force → real `sensors_plus` stream. Speed → `currentPositionProvider`. Battery → `battery_plus`. SOS → `url_launcher` dials `tel:+91{phone}`.
+**Connections:** G-Force → `sensors_plus` stream · Speed → `currentPositionProvider` · Battery → `battery_plus` · SOS → `url_launcher` dials `tel:+91{emergencyPhone}`
 
-**Verify:** G-Force changes on phone movement. Battery shows real %. SOS opens dialer.
+### ✅ Test Gate — Phase 4
+```bash
+flutter analyze
+# Expected: No issues found!
+
+flutter build apk --debug
+# Expected: BUILD SUCCESSFUL
+
+adb install -r build/app/outputs/flutter-apk/app-debug.apk
+```
+
+👤 **On device:**
+- [ ] Guardian tab → page loads without error
+- [ ] G-Force card shows a non-zero reading (e.g. `1.02`) — value changes visibly when you shake or tilt phone
+- [ ] Speed shows `0.0 km/h` at rest (outdoors: changes when walking)
+- [ ] Battery % matches what Android shows in status bar (within ±2%)
+- [ ] SOS button → phone dialer opens with emergency contact number pre-filled
+- [ ] Dialer shows the number — does NOT auto-call (you must press dial manually)
+
+**All 6 must pass before Phase 5.**
 
 ---
 
 ## Phase 5 — Feature Flag Shell
 > ~2 hours
 
+🤖 **AI tasks (in order):**
 1. `lib/shared/widgets/coming_soon_page.dart` — lock icon + feature name + description
-2. Add Communities + Marketplace tabs to `navbar.dart` (check `featuresProvider`, show `ComingSoonPage` if false)
-3. Add community/marketplace routes to `router.dart`
+2. Update `lib/shared/widgets/navbar.dart` — add Communities + Marketplace tabs, check `featuresProvider`, show `ComingSoonPage` if flag is false
+3. Update `lib/app/router.dart` — add community + marketplace routes
+
+### ✅ Test Gate — Phase 5
+```bash
+flutter analyze
+# Expected: No issues found!
+
+flutter build apk --debug
+# Expected: BUILD SUCCESSFUL
+
+adb install -r build/app/outputs/flutter-apk/app-debug.apk
+```
+
+👤 **On device (flags OFF — default state):**
+- [ ] Navbar shows Communities tab → tap → "Coming Soon" screen appears (lock icon + text)
+- [ ] Navbar shows Marketplace tab → tap → "Coming Soon" screen appears
+
+👤 **Flag toggle smoke test:**
+- [ ] Firestore Console: set `config/features.communitiesEnabled = true`
+- [ ] Restart app → Communities tab shows a list/feed screen (not coming soon)
+- [ ] Firestore Console: set `communitiesEnabled` back to `false`
+- [ ] Restart app → Communities tab shows coming soon again
+
+**All 4 must pass before Phase 6.**
 
 ---
 
-## Phase 6 — Communities (locked until flag enabled)
+## Phase 6 — Communities
 > ~5-6 days
 
-**Files:**
-1. `community_model.dart` + `member_model.dart` (enum `MemberRole { admin, moderator, member }`)
-2. `community_repository.dart` — watch all/my communities, create/join/leave, manage members, update roles
-3. `community_feed_page.dart` — search + "Discover"/"My Groups" tabs + 2-col GridView + FAB
-4. `community_card.dart`
-5. `community_detail_page.dart` — SliverAppBar + TabBar (Chat | Rides | Members)
-6. `create_community_page.dart` — name, description, location, bikeType dropdown, photo/banner
-7. `community_chat_page.dart` — extends existing chat infrastructure
-8. `member_tile.dart` — avatar + role badge + admin/mod actions
-9. Add auto crash detection to `guardian_page.dart`:
+👤 **Human prerequisite — do this before AI starts coding:**
+- Firestore Console: set `config/features.communitiesEnabled = true`
+
+🤖 **AI tasks (in order):**
+1. `lib/features/community/domain/community_model.dart` + `member_model.dart` (enum `MemberRole { admin, moderator, member }`)
+2. `lib/features/community/data/community_repository.dart` — watch all/my communities, create/join/leave, manage members, update roles
+3. `lib/features/community/presentation/community_feed_page.dart` — search + "Discover"/"My Groups" tabs + 2-col GridView + FAB
+4. `lib/features/community/presentation/widgets/community_card.dart`
+5. `lib/features/community/presentation/community_detail_page.dart` — SliverAppBar + TabBar (Chat | Rides | Members)
+6. `lib/features/community/presentation/create_community_page.dart` — name, description, location, bikeType dropdown, photo/banner
+7. `lib/features/chat/presentation/community_chat_page.dart` — extends existing chat infrastructure
+8. `lib/features/community/presentation/widgets/member_tile.dart` — avatar + role badge + admin/mod actions
+9. Add auto crash detection to `lib/features/guardian/presentation/guardian_page.dart`:
    - `watchGForceSpikes()` (G > 4g) → show 30s countdown dialog → auto-dial if not cancelled
    - Settings toggle for sensitivity
 
-**Unlock:** Set `communitiesEnabled: true` in `config/features`.
+### ✅ Test Gate — Phase 6
+```bash
+flutter analyze
+# Expected: No issues found!
+
+flutter build apk --debug
+# Expected: BUILD SUCCESSFUL
+
+adb install -r build/app/outputs/flutter-apk/app-debug.apk
+```
+
+👤 **2 devices — communities flag ON:**
+- [ ] Communities tab shows feed (Discover / My Groups tabs visible)
+- [ ] Device A: tap `+` FAB → Create Community → fill name/description/location/bike type → save
+- [ ] Community card appears in Discover tab on both devices
+- [ ] Device B: tap community → Join → community appears in Device B's "My Groups"
+- [ ] Members tab: Device A shows as Admin, Device B shows as Member
+- [ ] Chat tab: Device A sends a message → Device B receives it in real time (under 3 seconds)
+- [ ] Rides tab: Device A schedules a ride → ride card appears for Device B
+- [ ] Device B RSVPs to the ride → RSVP count updates
+
+👤 **Auto crash detection:**
+- [ ] Guardian page: sharply jolt/shake phone several times → 30-second countdown dialog appears
+- [ ] Tap Cancel within 30 seconds → dialog closes, no call made
+- [ ] Sensitivity toggle in Settings changes the G threshold
+
+**All checkboxes must pass before Phase 7.**
 
 ---
 
-## Phase 7 — Marketplace + DMs (locked until flag enabled)
+## Phase 7 — Marketplace + DMs
 > ~5-6 days
 
-**Files:**
-1. `listing_model.dart` — enums: `ListingCategory`, `ListingCondition`, `ListingStatus`
-2. `marketplace_repository.dart` — watch/filter listings, create/update/delete/report
-3. `dm_repository.dart` — `conversationId = [uid1, uid2].sorted().join('_')`, watch convos + messages
-4. `marketplace_page.dart` — category filter chips + search + ListView
-5. `listing_card.dart` + `listing_detail_page.dart` — photo carousel + "Message Seller" button
-6. `create_listing_page.dart` — photos (max 5) + fixed category dropdown + guidelines shown on first use
-7. `conversations_page.dart` + `dm_chat_page.dart` — same bubble UI, listing preview at top
+👤 **Human prerequisite — do this before AI starts coding:**
+- Firestore Console: set `config/features.marketplaceEnabled = true`
 
-**Enforcement:** Category is required fixed dropdown. No free-text. Report button on every listing.
+🤖 **AI tasks (in order):**
+1. `lib/features/marketplace/domain/listing_model.dart` — enums: `ListingCategory`, `ListingCondition`, `ListingStatus`
+2. `lib/features/marketplace/data/marketplace_repository.dart` — watch/filter listings, create/update/delete/report
+3. `lib/features/marketplace/data/dm_repository.dart` — `conversationId = [uid1, uid2].sorted().join('_')`, watch convos + messages
+4. `lib/features/marketplace/presentation/marketplace_page.dart` — category filter chips + search + ListView
+5. `lib/features/marketplace/presentation/widgets/listing_card.dart`
+6. `lib/features/marketplace/presentation/listing_detail_page.dart` — photo carousel + "Message Seller" button
+7. `lib/features/marketplace/presentation/create_listing_page.dart` — photos (max 5) + fixed category dropdown + guidelines shown on first use
+8. `lib/features/marketplace/presentation/conversations_page.dart`
+9. `lib/features/marketplace/presentation/dm_chat_page.dart` — same bubble UI, listing preview at top
 
-**Unlock:** Set `marketplaceEnabled: true` in `config/features`.
+**Category enforcement:** fixed dropdown, no free text, Report button on every listing.
+
+### ✅ Test Gate — Phase 7
+```bash
+flutter analyze
+# Expected: No issues found!
+
+flutter build apk --debug
+# Expected: BUILD SUCCESSFUL
+
+adb install -r build/app/outputs/flutter-apk/app-debug.apk
+```
+
+👤 **2 devices — marketplace flag ON:**
+- [ ] Marketplace tab shows listing feed (not coming soon)
+- [ ] Device A: tap `+` → Create Listing → category is a fixed dropdown (no free-text field) → upload 1 photo → set price → save
+- [ ] Listing appears in feed on both devices within 5 seconds
+- [ ] Tap listing → detail page shows photo, price, description
+- [ ] Device B: tap "Message Seller" → DM chat opens with listing preview card at top
+- [ ] Device A: receives message in Conversations tab
+- [ ] Report button is visible on listing detail page
+- [ ] Category filter chips filter the feed correctly (tap "Bikes" → only bike listings shown)
+
+**All 7 must pass before Phase 8.**
 
 ---
 
 ## Phase 8 — FCM + Update Check + Polish
 > ~2-3 days
 
-1. `notification_service.dart` — create `motolink_default` channel, request permission, save FCM token to user doc, handle foreground messages
-2. `update_service.dart` — fetch GitHub raw JSON, compare version, show update dialog
-3. FCM background handler in `main.dart` (top-level `@pragma('vm:entry-point')` function)
-4. `settings_page.dart` — port `_reference/settings_page.dart`, connect real data (prefs, version, sign out)
+🤖 **AI tasks (in order):**
+1. `lib/shared/services/notification_service.dart` — create `motolink_default` channel, request permission, save FCM token to user doc, handle foreground messages
+2. `lib/shared/services/update_service.dart` — fetch GitHub raw JSON, compare version, show update dialog
+3. FCM background handler in `lib/main.dart` — top-level `@pragma('vm:entry-point')` function
+4. `lib/features/settings/presentation/settings_page.dart` — port `_reference/settings_page.dart`, connect real prefs/version/sign-out
 
-**Host update JSON at GitHub:**
+👤 **Human task — host update JSON on GitHub:**
 ```json
 { "latestVersion": "1.0.0", "downloadUrl": "https://github.com/.../motolink.apk", "mandatory": false }
 ```
 
-**Final verify:** `flutter analyze` zero warnings → `flutter build apk --release` → install on device → full Day 1 flow end-to-end.
+### ✅ Test Gate — Phase 8 (Final)
+```bash
+flutter analyze
+# Expected: No issues found!
+
+flutter build apk --release
+# Expected: BUILD SUCCESSFUL  ← release build for final testing
+
+adb install -r build/app/outputs/flutter-apk/app-release.apk
+```
+
+👤 **Notifications:**
+- [ ] Fully close app → Firebase Console → Cloud Messaging → Send test message → notification arrives on device
+- [ ] Tap notification → app opens and navigates to the correct screen
+
+👤 **Update check:**
+- [ ] Settings page shows the correct app version number
+- [ ] Temporarily change `latestVersion` in GitHub JSON to `99.0.0` → relaunch app → update dialog appears with download button
+- [ ] Tap download → browser opens with APK download link
+- [ ] Restore `latestVersion` back to `1.0.0`
+
+👤 **Settings:**
+- [ ] Sign Out button → app returns to login screen
+- [ ] Sign back in → same account, data intact
+
+👤 **Full Day 1 regression — 2 devices:**
+- [ ] Auth + profile complete on both devices
+- [ ] Create ride → join by code → lobby → start → GPS dots move → PTT voice works → chat message delivered → end ride → KMs saved
+- [ ] Guardian: G-Force updates on movement, battery accurate, SOS opens dialer
+- [ ] No crashes during the entire flow
+
+**All checkboxes pass = app is ready for APK distribution.**
 
 ---
 
