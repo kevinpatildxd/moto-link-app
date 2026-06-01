@@ -183,6 +183,9 @@ lib/
 │   │   └── presentation/
 │   │       ├── profile_page.dart        KMs + badges + ride history
 │   │       └── edit_profile_page.dart
+│   ├── settings/                        Phase 8
+│   │   └── presentation/
+│   │       └── settings_page.dart
 │   ├── community/                       Phase 6 — locked
 │   │   ├── data/community_repository.dart
 │   │   ├── domain/ community_model.dart, member_model.dart
@@ -197,7 +200,8 @@ lib/
 │   │   ├── features_provider.dart       Reads config/features
 │   │   ├── ride_provider.dart
 │   │   ├── location_provider.dart
-│   │   └── chat_provider.dart
+│   │   ├── chat_provider.dart
+│   │   └── voice_provider.dart          LiveKit room state + speaking indicators
 │   ├── services/
 │   │   ├── location_service.dart        GPS + foreground service
 │   │   ├── notification_service.dart    FCM setup
@@ -231,8 +235,14 @@ lib/
 | `editProfile` | `/profile/edit` | `EditProfilePage` |
 | `guardian` | `/guardian` | `GuardianPage` |
 | `settings` | `/settings` | `SettingsPage` |
-| `communities` | `/communities` | `CommunitiesPage` OR `ComingSoonPage` |
+| `communities` | `/communities` | `CommunityFeedPage` OR `ComingSoonPage` |
+| `communityDetail` | `/communities/:communityId` | `CommunityDetailPage` |
+| `createCommunity` | `/communities/create` | `CreateCommunityPage` |
 | `marketplace` | `/marketplace` | `MarketplacePage` OR `ComingSoonPage` |
+| `listingDetail` | `/marketplace/:listingId` | `ListingDetailPage` |
+| `createListing` | `/marketplace/create` | `CreateListingPage` |
+| `conversations` | `/conversations` | `ConversationsPage` |
+| `dmChat` | `/conversations/:conversationId` | `DmChatPage` |
 
 ---
 
@@ -256,6 +266,71 @@ lib/
 5. Storage → Create → `asia-south1` → apply rules
 6. Add Android app → package `com.motolink.app` → get SHA-1 via `./gradlew signingReport` → download `google-services.json` → place at `android/app/google-services.json`
 7. Create Firestore document `config/features`: `{ communitiesEnabled: false, marketplaceEnabled: false }`
+
+👤 **Firestore Security Rules** (Firestore → Rules tab — paste and publish):
+```js
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Feature flags — read by all, write by none
+    match /config/{doc} {
+      allow read: if true;
+      allow write: if false;
+    }
+    // Users — read/write own doc only
+    match /users/{uid} {
+      allow read, write: if request.auth.uid == uid;
+    }
+    // Rides — authenticated users can read/write
+    match /rides/{rideId} {
+      allow read, write: if request.auth != null;
+      match /participants/{uid} { allow read, write: if request.auth != null; }
+      match /messages/{msgId} { allow read, write: if request.auth != null; }
+    }
+    // Communities — authenticated users can read; write requires membership check
+    match /communities/{communityId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+      allow update, delete: if request.auth != null &&
+        get(/databases/$(database)/documents/communities/$(communityId)/members/$(request.auth.uid)).data.role == 'admin';
+      match /members/{uid} { allow read, write: if request.auth != null; }
+      match /messages/{msgId} { allow read, write: if request.auth != null; }
+      match /rides/{rideId} { allow read, write: if request.auth != null; }
+    }
+    // Marketplace — authenticated users can read; write own listings only
+    match /marketplace/{listingId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+      allow update, delete: if request.auth.uid == resource.data.sellerId;
+    }
+    // DM conversations — participants only
+    match /conversations/{convId} {
+      allow read, write: if request.auth.uid in resource.data.participants;
+      allow create: if request.auth != null;
+      match /messages/{msgId} { allow read, write: if request.auth != null; }
+    }
+  }
+}
+```
+
+👤 **Realtime Database Rules** (Realtime DB → Rules tab):
+```json
+{
+  "rules": {
+    "rides": {
+      "$rideId": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    }
+  }
+}
+```
+
+👤 **Firestore Composite Index** (needed for join code query in Phase 3):
+- Firestore Console → Indexes → Composite → Add index
+- Collection: `rides` · Field 1: `joinCode` (Ascending) · Field 2: `status` (Ascending)
+- (Alternatively, Firestore will prompt you with a direct link the first time the query runs)
 
 👤 **FlutterFire CLI:**
 ```bash
@@ -429,10 +504,11 @@ flutter build apk --debug
 11. `lib/shared/widgets/navbar.dart` — port exact CustomNavbar, tabs: Home/Guardian/Profile/Settings
 12. `lib/shared/widgets/loading_overlay.dart`
 13. `lib/shared/widgets/app_error_widget.dart`
-14. `lib/features/auth/presentation/login_page.dart`
-15. `lib/features/auth/presentation/profile_setup_page.dart`
-16. `lib/features/profile/presentation/profile_page.dart` — KMs counter + badges grid + ride history
-17. `lib/features/profile/presentation/edit_profile_page.dart`
+14. `lib/shared/widgets/coming_soon_page.dart` — lock icon + feature name + description (navbar needs this even before Phase 5)
+15. `lib/features/auth/presentation/login_page.dart`
+16. `lib/features/auth/presentation/profile_setup_page.dart`
+17. `lib/features/profile/presentation/profile_page.dart` — KMs counter + badges grid + ride history
+18. `lib/features/profile/presentation/edit_profile_page.dart`
 
 **Key method — `addRideDistance(uid, distanceKm)`:**
 - `FieldValue.increment(distanceKm)` on `users/{uid}.totalKm`
@@ -478,7 +554,7 @@ adb install -r build/app/outputs/flutter-apk/app-debug.apk
 10. `lib/shared/services/location_service.dart` — GPS stream + foreground service platform channel
 11. `android/app/src/main/kotlin/com/motolink/app/LocationForegroundService.kt` — `START_STICKY`, notification "Tracking your ride..."
 12. Update `MainActivity.kt` — add MethodChannel `com.motolink.app/location_service`
-13. `lib/shared/providers/ride_provider.dart` + `location_provider.dart` + `chat_provider.dart`
+13. `lib/shared/providers/ride_provider.dart` + `location_provider.dart` + `chat_provider.dart` + `voice_provider.dart` — voice_provider wraps LiveKit room state (connection status, speaking participants, mute toggle) for the UI
 14. `lib/features/ride/presentation/home_page.dart` — Start/Join buttons + recent rides
 15. `lib/features/ride/presentation/create_ride_page.dart` — form + map pin picker + join code display
 16. `lib/features/ride/presentation/join_ride_page.dart` — OTP-style code input
@@ -581,9 +657,8 @@ adb install -r build/app/outputs/flutter-apk/app-debug.apk
 > ~2 hours
 
 🤖 **AI tasks (in order):**
-1. `lib/shared/widgets/coming_soon_page.dart` — lock icon + feature name + description
-2. Update `lib/shared/widgets/navbar.dart` — add Communities + Marketplace tabs, check `featuresProvider`, show `ComingSoonPage` if flag is false
-3. Update `lib/app/router.dart` — add community + marketplace routes
+1. Update `lib/shared/widgets/navbar.dart` — add Communities + Marketplace tabs, check `featuresProvider`, show `ComingSoonPage` if flag is false (`coming_soon_page.dart` already created in Phase 2)
+2. Update `lib/app/router.dart` — add community + marketplace routes (pointing to `ComingSoonPage` until Phase 6/7)
 
 ### ✅ Test Gate — Phase 5
 ```bash
@@ -711,8 +786,34 @@ adb install -r build/app/outputs/flutter-apk/app-debug.apk
 2. `lib/shared/services/update_service.dart` — fetch GitHub raw JSON, compare version, show update dialog
 3. FCM background handler in `lib/main.dart` — top-level `@pragma('vm:entry-point')` function
 4. `lib/features/settings/presentation/settings_page.dart` — port `_reference/settings_page.dart`, connect real prefs/version/sign-out
+5. Add signing config to `android/app/build.gradle.kts` — reads from `key.properties`, applies to release build type
 
-👤 **Human task — host update JSON on GitHub:**
+👤 **Human tasks:**
+
+**Android release keystore** (one-time, do before first release build):
+```bash
+# Generate keystore — keep this file safe, you need it for every future release
+keytool -genkey -v -keystore android/app/motolink.keystore \
+  -alias motolink -keyalg RSA -keysize 2048 -validity 10000
+
+# Create android/key.properties (add to .gitignore — never commit this)
+storePassword=<your_password>
+keyPassword=<your_password>
+keyAlias=motolink
+storeFile=motolink.keystore
+```
+
+Add to `android/app/build.gradle.kts` (signing config block — AI handles this).
+
+**Add release SHA-1 to Firebase** (Google Sign-In breaks on release builds without this):
+```bash
+# Get release SHA-1
+keytool -list -v -keystore android/app/motolink.keystore -alias motolink
+# Copy the SHA-1 value
+```
+Firebase Console → Project Settings → Android app → Add fingerprint → paste release SHA-1.
+
+**Host update JSON on GitHub:**
 ```json
 { "latestVersion": "1.0.0", "downloadUrl": "https://github.com/.../motolink.apk", "mandatory": false }
 ```
@@ -848,6 +949,7 @@ feat(profile): add profile page with KMs counter and badges grid
 feat(profile): add edit profile page
 feat(app): wire up MaterialApp.router with Firebase init and ProviderScope
 feat(app): add navbar, loading overlay, error widget, and coming soon page
+chore(ref): archive existing UI to lib/_reference for visual reference
 ```
 
 ### Phase 3 — Standalone Ride
@@ -862,7 +964,7 @@ feat(map): add OverpassRepository for gas stations and rest stops
 feat(voice): add LiveKitService wrapper for PTT and open mic
 feat(location): add LocationService with GPS stream and foreground service
 feat(android): add LocationForegroundService and MainActivity MethodChannel
-feat(ride): add Riverpod providers for ride, location, and chat
+feat(ride): add Riverpod providers for ride, location, chat, and voice
 feat(ride): add home page with start and join ride buttons
 feat(ride): add create ride page with map pin picker and join code display
 feat(ride): add join ride page with OTP-style code input
@@ -885,7 +987,6 @@ feat(guardian): add guardian page with real sensors and SOS dial button
 
 ### Phase 5 — Feature Flag Shell
 ```
-feat(app): add coming soon page for locked features
 feat(app): add communities and marketplace tabs with feature flag gating
 ```
 
@@ -918,6 +1019,7 @@ feat(firebase): add FCM notification service with channel setup
 feat(app): add update check service with GitHub APK version comparison
 feat(settings): add settings page connected to real preferences and auth
 fix(firebase): add FCM background message handler in main.dart
+chore(android): add release signing config reading from key.properties
 ```
 
 ---
