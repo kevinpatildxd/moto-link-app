@@ -1,0 +1,9 @@
+# <type>(<scope>): <short description — max 72 chars, lowercase, no period>
+#
+# Types:  feat | fix | chore | refactor | docs
+# Scopes: android | deps | auth | ride | map | voice | chat |
+#         guardian | profile | community | marketplace | config | router | firebase | app
+#
+# Body (optional — only explain WHY, not what):
+
+Author: kevinpatildxd
